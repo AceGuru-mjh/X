@@ -1,9 +1,17 @@
 package com.unknown.security.feature.settings
 
+import android.app.AppOpsManager
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
+import android.os.PowerManager
+import android.os.Process
 import android.provider.Settings
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -20,11 +28,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
@@ -33,7 +47,8 @@ import com.unknown.security.core.designsystem.GlassCard
 import com.unknown.security.core.designsystem.GlassChip
 import com.unknown.security.core.designsystem.GlassScaffold
 import com.unknown.security.core.designsystem.GlassTopBar
-import com.unknown.security.core.model.EnginePolicy
+import com.unknown.security.core.designsystem.SeverityStyle
+import com.unknown.security.core.model.ThemeMode
 import com.unknown.security.core.model.ThreatSeverity
 import com.unknown.security.data.repository.GuardRepository
 import com.unknown.security.service.accessibility.AccessibilityStatus
@@ -41,7 +56,7 @@ import com.unknown.security.service.deviceadmin.DeviceAdminState
 import com.unknown.security.service.root.RootState
 import com.unknown.security.service.shizuku.ShizukuState
 
-/** Channel setup guides + engine policy knobs. */
+/** Channel setup guides + engine policy knobs + appearance + data. */
 @Composable
 fun SettingsScreen(
     repository: GuardRepository,
@@ -53,18 +68,38 @@ fun SettingsScreen(
         )
     val context = LocalContext.current
     val policy by vm.policy.collectAsState()
+    val themeMode by vm.themeMode.collectAsState()
     val shizukuState by vm.shizukuState.collectAsState()
     val rootState by vm.rootState.collectAsState()
     val deviceAdminState by vm.deviceAdminState.collectAsState()
-    val accessibilityOn = AccessibilityStatus.isServiceEnabled(context)
 
-    DisposableEffect(Unit) {
-        onDispose { }
+    // Re-evaluate every system permission whenever the user comes back from
+    // a system settings screen.
+    var refreshTick by remember { mutableIntStateOf(0) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer =
+            LifecycleEventObserver { _, event ->
+                if (event == Lifecycle.Event.ON_RESUME) {
+                    refreshTick++
+                    vm.refresh()
+                }
+            }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
+
+    @Suppress("UNUSED_EXPRESSION")
+    refreshTick
+    val notificationsOn = notificationsGranted(context)
+    val usageAccessOn = usageAccessGranted(context)
+    val overlayOn = Settings.canDrawOverlays(context)
+    val batteryIgnored = batteryOptimizationIgnored(context)
+    val accessibilityOn = AccessibilityStatus.isServiceEnabled(context)
 
     GlassScaffold(
         modifier = modifier,
-        topBar = { GlassTopBar(title = "设置", subtitle = "权限通道 · 引擎策略 · 关于") },
+        topBar = { GlassTopBar(title = "设置", subtitle = "权限通道 · 引擎策略 · 外观 · 数据") },
     ) {
         Column(
             Modifier
@@ -74,6 +109,67 @@ fun SettingsScreen(
                 .padding(bottom = 140.dp, top = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            SectionTitle("系统权限")
+
+            ChannelCard(
+                title = "通知",
+                statusText = if (notificationsOn) "已授权" else "未授权",
+                ok = notificationsOn,
+                description = "威胁告警与守护状态都依赖通知；关闭后拦截事件将不再提醒。",
+                actionLabel = "去系统设置",
+                onAction = {
+                    runCatching {
+                        context.startActivity(
+                            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                            },
+                        )
+                    }
+                },
+            )
+
+            ChannelCard(
+                title = "使用情况访问",
+                statusText = if (usageAccessOn) "已授权" else "未授权",
+                ok = usageAccessOn,
+                description = "无无障碍时的前台应用监控基线，危险应用上台即可告警。",
+                actionLabel = "去系统设置开启",
+                onAction = {
+                    runCatching { context.startActivity(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)) }
+                },
+            )
+
+            ChannelCard(
+                title = "悬浮窗",
+                statusText = if (overlayOn) "已授权" else "未授权",
+                ok = overlayOn,
+                description = "风险应用安装 / 上台时在任意界面之上弹出悬浮警示。",
+                actionLabel = "去系统设置开启",
+                onAction = {
+                    runCatching {
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}"),
+                            ),
+                        )
+                    }
+                },
+            )
+
+            ChannelCard(
+                title = "电池优化白名单",
+                statusText = if (batteryIgnored) "已加入" else "未加入",
+                ok = batteryIgnored,
+                description = "加入后系统不会激进清理后台守护服务，拦截更稳定。",
+                actionLabel = "去系统设置",
+                onAction = {
+                    runCatching {
+                        context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    }
+                },
+            )
+
             SectionTitle("权限通道")
 
             ChannelCard(
@@ -168,11 +264,12 @@ fun SettingsScreen(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
                     ThreatSeverity.entries.forEach { severity ->
-                        if (severity == policy.autoActThreshold) {
-                            GlassChip(text = severity.label, tint = MaterialTheme.colorScheme.primary)
-                        } else {
-                            GlassChip(text = severity.label)
-                        }
+                        SelectableChip(
+                            text = severity.label,
+                            selected = severity == policy.autoActThreshold,
+                            tint = SeverityStyle.severityColor(severity),
+                            onClick = { vm.setAutoThreshold(severity) },
+                        )
                     }
                 }
             }
@@ -206,17 +303,109 @@ fun SettingsScreen(
             )
 
             PolicySwitchRow(
+                title = "通知告警",
+                subtitle = "命中风险时推送高优先级通知（需通知权限）",
+                checked = policy.notificationsEnabled,
+                onChange = { enabled -> vm.updatePolicy { it.copy(notificationsEnabled = enabled) } },
+            )
+
+            PolicySwitchRow(
+                title = "悬浮窗告警",
+                subtitle = "在任意界面之上弹出风险警示（需悬浮窗权限）",
+                checked = policy.overlayAlertsEnabled,
+                onChange = { enabled -> vm.updatePolicy { it.copy(overlayAlertsEnabled = enabled) } },
+            )
+
+            PolicySwitchRow(
                 title = "紧急触发",
                 subtitle = "连按 ${policy.emergencyVolumePresses} 次音量键触发全盘体检与紧急处置",
                 checked = policy.emergencyEnabled,
                 onChange = { enabled -> vm.updatePolicy { it.copy(emergencyEnabled = enabled) } },
             )
 
+            Column {
+                Text(
+                    text = "紧急触发连按次数：${policy.emergencyVolumePresses} 次",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
+                    listOf(3, 4, 5).forEach { presses ->
+                        SelectableChip(
+                            text = "$presses 次",
+                            selected = presses == policy.emergencyVolumePresses,
+                            tint = MaterialTheme.colorScheme.primary,
+                            onClick = { vm.setEmergencyPresses(presses) },
+                        )
+                    }
+                }
+            }
+
+            SectionTitle("外观")
+
+            Column {
+                Text(
+                    text = "主题模式：${themeMode.label}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 6.dp)) {
+                    ThemeMode.entries.forEach { mode ->
+                        SelectableChip(
+                            text = mode.label,
+                            selected = mode == themeMode,
+                            tint = MaterialTheme.colorScheme.primary,
+                            onClick = { vm.setThemeMode(mode) },
+                        )
+                    }
+                }
+            }
+
+            SectionTitle("引导与数据")
+
+            GlassCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "重新打开新手引导",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "重新逐项检查并引导开启通知、悬浮窗、无障碍、Shizuku 等权限。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    GlassButton(onClick = { vm.reopenOnboarding() }) {
+                        Text("打开新手引导")
+                    }
+                }
+            }
+
+            GlassCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "清空拦截日志",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "删除全部拦截与扫描事件记录，不影响规则与白名单。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    GlassButton(onClick = { vm.clearEvents() }) {
+                        Text("清空日志")
+                    }
+                }
+            }
+
             SectionTitle("关于")
             GlassCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        text = "Unknown 守护 · v1.0.0",
+                        text = "Unknown 守护 · v${appVersion(context)}",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.Bold,
                     )
@@ -243,9 +432,37 @@ private fun ShizukuState.displayLabel(): String =
         ShizukuState.NOT_INSTALLED -> "未安装"
         ShizukuState.NOT_RUNNING -> "未启动"
         ShizukuState.UNAUTHORIZED -> "未授权"
-        ShizukuState.ASKING -> "授权中"
+        ShizukuState.ASKING -> "请求中"
         ShizukuState.READY -> "已就绪"
     }
+
+private fun notificationsGranted(context: Context): Boolean =
+    Build.VERSION.SDK_INT < 33 ||
+        context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+        PackageManager.PERMISSION_GRANTED
+
+private fun usageAccessGranted(context: Context): Boolean {
+    val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager ?: return false
+    val mode =
+        runCatching {
+            appOps.unsafeCheckOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS,
+                Process.myUid(),
+                context.packageName,
+            )
+        }.getOrDefault(AppOpsManager.MODE_ERRORED)
+    return mode == AppOpsManager.MODE_ALLOWED
+}
+
+private fun batteryOptimizationIgnored(context: Context): Boolean {
+    val power = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
+    return power.isIgnoringBatteryOptimizations(context.packageName)
+}
+
+private fun appVersion(context: Context): String =
+    runCatching {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName
+    }.getOrNull() ?: "1.0.0"
 
 @Composable
 private fun SectionTitle(text: String) {
@@ -255,6 +472,21 @@ private fun SectionTitle(text: String) {
         fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.onSurface,
     )
+}
+
+@Composable
+private fun SelectableChip(
+    text: String,
+    selected: Boolean,
+    tint: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+) {
+    Box(Modifier.clickable(onClick = onClick)) {
+        GlassChip(
+            text = text,
+            tint = if (selected) tint else androidx.compose.ui.graphics.Color.Unspecified,
+        )
+    }
 }
 
 @Composable
@@ -282,8 +514,7 @@ private fun ChannelCard(
                         if (ok) {
                             MaterialTheme.colorScheme.primary
                         } else {
-                            com.unknown.security.core.designsystem.SeverityStyle
-                                .severityColor(ThreatSeverity.MEDIUM)
+                            SeverityStyle.severityColor(ThreatSeverity.MEDIUM)
                         },
                 )
             }
