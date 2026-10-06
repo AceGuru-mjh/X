@@ -15,6 +15,7 @@ import com.unknown.security.R
 import com.unknown.security.app.MainActivity
 import com.unknown.security.app.UnknownApp
 import com.unknown.security.app.di.AppContainer
+import com.unknown.security.app.overlay.OverlayAlertController
 import com.unknown.security.core.model.VerdictLevel
 import com.unknown.security.data.repository.AlertRequest
 import kotlinx.coroutines.flow.collectLatest
@@ -22,14 +23,16 @@ import kotlinx.coroutines.launch
 
 /**
  * Foreground guard service: owns the live interception pipeline and renders
- * alerts (high-priority notifications) when threats are detected.
+ * alerts (high-priority notifications + optional overlay) when threats are detected.
  */
 class GuardService : Service() {
     private lateinit var container: AppContainer
+    private lateinit var overlay: OverlayAlertController
 
     override fun onCreate() {
         super.onCreate()
         container = UnknownApp.container(this)
+        overlay = OverlayAlertController(this)
     }
 
     override fun onStartCommand(
@@ -42,7 +45,13 @@ class GuardService : Service() {
 
         container.applicationScope.launch {
             container.repository.alerts.collectLatest { alert ->
-                showAlertNotification(alert)
+                val policy = container.repository.policy.value
+                if (policy.notificationsEnabled) {
+                    showAlertNotification(alert)
+                }
+                if (policy.overlayAlertsEnabled) {
+                    overlay.show(alert)
+                }
             }
         }
         return START_STICKY
@@ -51,6 +60,7 @@ class GuardService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        overlay.dismiss()
         container.repository.stop()
         super.onDestroy()
     }
