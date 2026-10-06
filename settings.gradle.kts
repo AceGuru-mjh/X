@@ -19,6 +19,7 @@ rootProject.name = "unknown-security"
 
 include(":core:common")
 include(":core:model")
+include(":core:native")
 include(":core:persistence")
 include(":core:designsystem")
 include(":domain:engine")

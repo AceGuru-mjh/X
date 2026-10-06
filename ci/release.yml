@@ -1,0 +1,99 @@
+name: release
+
+# Builds, signs and publishes a release APK every time a PR is merged into
+# main (a merge always lands as a push on main). Can also be run manually.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-main
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-sign-release:
+    name: build signed APK & publish release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up JDK
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Accept Android SDK licenses and install platform
+        run: |
+          SDKMANAGER="$(ls "${ANDROID_HOME}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n 1)"
+          if [ -z "${SDKMANAGER}" ]; then
+            SDKMANAGER="$(ls "${ANDROID_SDK_ROOT}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n 1)"
+          fi
+          echo "Using sdkmanager: ${SDKMANAGER}"
+          yes | "${SDKMANAGER}" --licenses > /dev/null || true
+          "${SDKMANAGER}" --install "platforms;android-37.0" > /dev/null
+
+      - name: Prepare release keystore
+        run: |
+          # Prefer a repository secret (base64-encoded keystore) when present;
+          # otherwise decode the project keystore committed as chunked base64
+          # under app/keystore/ so every release shares one stable signing
+          # identity (alias meng411722).
+          if [ -n "${SIGNING_KEYSTORE_BASE64}" ]; then
+            echo "Using keystore from repository secret"
+            echo "${SIGNING_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/unknown-release.keystore"
+          else
+            echo "Decoding committed keystore"
+            cat app/keystore/release.keystore.part-* | base64 -d > "${RUNNER_TEMP}/unknown-release.keystore"
+          fi
+          keytool -list -keystore "${RUNNER_TEMP}/unknown-release.keystore" \
+            -storepass "${SIGNING_STORE_PASSWORD}" | head -4
+        env:
+          SIGNING_KEYSTORE_BASE64: ${{ secrets.SIGNING_KEYSTORE_BASE64 }}
+          SIGNING_KEY_ALIAS: meng411722
+          SIGNING_STORE_PASSWORD: meng411722
+          SIGNING_KEY_PASSWORD: meng411722
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+
+      - name: Assemble signed release APK
+        run: ./gradlew :app:assembleRelease --stacktrace --no-daemon
+        env:
+          UNKNOWN_SIGNING_STORE: ${{ runner.temp }}/unknown-release.keystore
+          UNKNOWN_SIGNING_STORE_PASSWORD: meng411722
+          UNKNOWN_SIGNING_KEY_ALIAS: meng411722
+          UNKNOWN_SIGNING_KEY_PASSWORD: meng411722
+
+      - name: Verify APK signature
+        run: |
+          APK="app/build/outputs/apk/release/app-release.apk"
+          test -f "${APK}"
+          "${ANDROID_HOME}/build-tools/"*/apksigner verify --print-certs "${APK}" | head -5
+
+      - name: Prepare release assets
+        run: |
+          VERSION_NAME="$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts | head -n 1)"
+          TAG="v${VERSION_NAME}-build${{ github.run_number }}"
+          echo "TAG=${TAG}" >> "${GITHUB_ENV}"
+          echo "VERSION_NAME=${VERSION_NAME}" >> "${GITHUB_ENV}"
+          cp app/build/outputs/apk/release/app-release.apk "unknown-guard-${TAG}.apk"
+          shasum -a 256 "unknown-guard-${TAG}.apk" > "unknown-guard-${TAG}.apk.sha256"
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${TAG}" \
+            "unknown-guard-${TAG}.apk" \
+            "unknown-guard-${TAG}.apk.sha256" \
+            --title "Unknown 守护 ${TAG}" \
+            --generate-notes \
+            --latest
