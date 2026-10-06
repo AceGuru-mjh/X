@@ -13,6 +13,7 @@ UI 与业务彻底解耦。整体自下而上分为五层。
 │  data/repository  仓库层：编排引擎、存储与各权限通道               │
 ├────────────────────────────────────────────────────────────────┤
 │  domain/engine   检测引擎：规则匹配 + 评分 + 处置策略（纯 Kotlin）│
+│  core/native     原生检测核心：C++17 匹配热路径（可选加速）    │
 │  core/model      领域模型：守卫层级 / 能力 / 规则 / 事件          │
 │  core/persistence 存储：DataStore + JSON 规则/事件/白名单         │
 ├────────────────────────────────────────────────────────────────┤
@@ -73,6 +74,14 @@ InterceptionEvent 落盘 + 通知 / 悬浮告警 / 统计
 评分：命中规则按 `ThreatSeverity`（LOW 10 / MEDIUM 25 / HIGH 50 / CRITICAL 100）累加，
 映射到 `VerdictLevel`（CLEAN / SUSPICIOUS / DANGEROUS），再由 `EnginePolicy`
 （自动处置阈值等）决定动作。
+
+### 原生检测核心（core/native）
+
+规则匹配的热路径可选下沉到 C++17 原生核心（JNI 桥 + `libunknown_native.so`）：
+Aho-Corasick 关键词自动机、权限组合稠密位图、流式 SHA-256、轻量正则与
+精确包名 / 哈希开放寻址表。纯 Kotlin 引擎仍是语义权威；设备无匹配 ABI 时
+`NativeRuleSet.compile()` 返回 null，引擎自动回退纯 Kotlin 路径。
+协议、线程模型与本地测试方法详见 [NATIVE_ENGINE.md](NATIVE_ENGINE.md)。
 
 ## 存储设计
 

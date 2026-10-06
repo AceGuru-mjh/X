@@ -9,6 +9,7 @@
 
 - **8 档守卫层级**：标准 / 无障碍 / Shizuku / 无障碍+Shizuku / Root / 无障碍+Root / 设备所有者 / 无障碍+设备所有者
 - **实时拦截引擎**：安装监听 → 规则匹配（包名 / 关键词 / 权限组合 / 哈希 / 目标SDK）→ 自动处置
+- **C++17 原生检测核心**：Aho-Corasick 关键词匹配 + 权限组合位图 + 流式 SHA-256 + 轻量正则，稳态零分配，不可用时自动回退纯 Kotlin 引擎
 - **处置能力矩阵**：强停 / 静默卸载 / 冻结 / 隐藏 / 安装阻断 / 弹窗接管
 - **全局液态玻璃 UI**：基于 Compose 与液态玻璃效果库构建，非 WebView、非毛玻璃
 - **可扩展规则库**：内置种子规则 + 用户自定义规则，支持导入导出
@@ -20,8 +21,8 @@
 
 ```
 app/                 应用壳：导航、DI 装配、前台守护服务、悬浮告警
-core/                common · model · persistence · designsystem
-domain/engine/       检测引擎（纯 Kotlin，可独立测试）
+core/                common · model · native(C++17) · persistence · designsystem
+domain/engine/       检测引擎（纯 Kotlin，可独立测试；native 热路径见 docs/NATIVE_ENGINE.md）
 service/             platform · accessibility · shizuku · root · deviceadmin
 data/repository/     仓库层：编排引擎、存储与各权限通道
 feature/             home · scan · shield · rules · settings
@@ -35,14 +36,23 @@ feature/             home · scan · shield · rules · settings
 | Gradle | 9.7.1（仓库自带 wrapper） |
 | Android Gradle Plugin | 9.3.2 |
 | Kotlin | 2.4.10 |
+| NDK / CMake | 27.2.12479018 / 3.22.1（仅 core/native 需要） |
 | compileSdk / targetSdk / minSdk | 37 / 37 / 26 |
 
 ```bash
 ./gradlew assembleDebug     # 调试包
-./gradlew assemble          # 全模块
+./gradlew assemble          # 全模块（含 libunknown_native.so）
 ```
 
-CI（GitHub Actions）会在每个 PR 上执行 wrapper 校验、ktlint 与全量构建。
+原生核心可在主机上独立构建与测试（无需 Android SDK）：
+
+```bash
+cmake -S core/native/src/main/cpp -B build-host -DUNKNOWN_NATIVE_BUILD_TESTS=ON
+cmake --build build-host --parallel && ctest --test-dir build-host --output-on-failure
+```
+
+CI（GitHub Actions）会在每个 PR 上执行 wrapper 校验、ktlint 与全量构建；
+native-ci 另跑主机单测与 NDK 双 ABI 交叉编译。
 
 ## 许可
 

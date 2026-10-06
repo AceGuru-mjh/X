@@ -56,12 +56,21 @@ jobs:
           java-version: '21'
       - name: Accept Android SDK licenses and install platform
         run: |
-          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "${SDKMANAGER}" ]; then
-            SDKMANAGER="${ANDROID_HOME}/cmdline-tools/bin/sdkmanager"
+          SDKMANAGER="$(ls "${ANDROID_HOME}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n 1)"
+          if [ -z "${SDKMANAGER}" ]; then
+            SDKMANAGER="$(ls "${ANDROID_SDK_ROOT}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n 1)"
           fi
+          echo "Using sdkmanager: ${SDKMANAGER}"
           yes | "${SDKMANAGER}" --licenses > /dev/null || true
           "${SDKMANAGER}" --install "platforms;android-37.0" > /dev/null
+      - name: Install NDK for core:native
+        run: |
+          SDKMANAGER="$(ls "${ANDROID_HOME}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n 1)"
+          if [ -z "${SDKMANAGER}" ]; then
+            SDKMANAGER="$(ls "${ANDROID_SDK_ROOT}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n 1)"
+          fi
+          echo "Using sdkmanager: ${SDKMANAGER}"
+          "${SDKMANAGER}" --install "ndk;27.2.12479018" > /dev/null
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
@@ -90,10 +99,11 @@ jobs:
           java-version: '21'
       - name: Accept Android SDK licenses and install platform
         run: |
-          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "${SDKMANAGER}" ]; then
-            SDKMANAGER="${ANDROID_HOME}/cmdline-tools/bin/sdkmanager"
+          SDKMANAGER="$(ls "${ANDROID_HOME}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n 1)"
+          if [ -z "${SDKMANAGER}" ]; then
+            SDKMANAGER="$(ls "${ANDROID_SDK_ROOT}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n 1)"
           fi
+          echo "Using sdkmanager: ${SDKMANAGER}"
           yes | "${SDKMANAGER}" --licenses > /dev/null || true
           "${SDKMANAGER}" --install "platforms;android-37.0" > /dev/null
       - name: Set up Gradle

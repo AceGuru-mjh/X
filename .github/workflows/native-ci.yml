@@ -1,0 +1,74 @@
+name: native-ci
+
+on:
+  pull_request:
+    paths:
+      - 'core/native/**'
+      - '.github/workflows/native-ci.yml'
+  push:
+    branches:
+      - main
+      - 'feat/**'
+  workflow_dispatch:
+
+concurrency:
+  group: native-ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  host-tests:
+    name: native core (host, ctest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Configure (tests ON)
+        run: >
+          cmake -S core/native/src/main/cpp -B build-host
+          -DUNKNOWN_NATIVE_BUILD_TESTS=ON
+          -DCMAKE_BUILD_TYPE=Release
+      - name: Build
+        run: cmake --build build-host --parallel
+      - name: Test
+        run: ctest --test-dir build-host --output-on-failure
+
+  ndk-build:
+    name: native lib (NDK cross-compile)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install NDK from the preinstalled Android SDK
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT}}"
+          SDKMANAGER="$(ls "${SDK_ROOT}"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -n 1)"
+          if [ -z "${SDKMANAGER}" ]; then
+            echo "sdkmanager not found under ${SDK_ROOT}/cmdline-tools" >&2
+            exit 1
+          fi
+          echo "Using sdkmanager: ${SDKMANAGER}"
+          yes | "${SDKMANAGER}" --licenses > /dev/null || true
+          "${SDKMANAGER}" --install "ndk;27.2.12479018" > /dev/null
+      - name: Configure (NDK toolchain)
+        run: >
+          cmake -S core/native/src/main/cpp -B build-${{ matrix.abi }}
+          -DCMAKE_TOOLCHAIN_FILE=${ANDROID_HOME:-${ANDROID_SDK_ROOT}}/ndk/27.2.12479018/build/cmake/android.toolchain.cmake
+          -DANDROID_ABI=${{ matrix.abi }}
+          -DANDROID_PLATFORM=android-26
+          -DCMAKE_BUILD_TYPE=Release
+      - name: Build shared library
+        run: cmake --build build-${{ matrix.abi }} --parallel
+      - name: Upload shared library
+        uses: actions/upload-artifact@v7
+        with:
+          name: unknown-native-${{ matrix.abi }}
+          path: build-${{ matrix.abi }}/libunknown_native.so
+          if-no-files-found: error
+          retention-days: 14
