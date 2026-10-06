@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.unknown.security.core.model.EnginePolicy
 import com.unknown.security.core.model.GuardTier
+import com.unknown.security.core.model.ThemeMode
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -21,6 +22,8 @@ private val Context.unknownDataStore: DataStore<Preferences> by preferencesDataS
  * - selected guard tier
  * - guard on/off
  * - engine policy (serialized JSON)
+ * - onboarding completion flag
+ * - appearance (theme mode)
  */
 class SettingsStore(
     private val context: Context,
@@ -28,6 +31,8 @@ class SettingsStore(
     private object Keys {
         val TIER = stringPreferencesKey("guard_tier")
         val GUARD_ENABLED = booleanPreferencesKey("guard_enabled")
+        val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+        val THEME_MODE = stringPreferencesKey("theme_mode")
         val POLICY_JSON = stringPreferencesKey("engine_policy_json")
     }
 
@@ -48,6 +53,16 @@ class SettingsStore(
             prefs[Keys.GUARD_ENABLED] ?: true
         }
 
+    val onboardingCompletedFlow: Flow<Boolean> =
+        context.unknownDataStore.data.map { prefs ->
+            prefs[Keys.ONBOARDING_COMPLETED] ?: false
+        }
+
+    val themeModeFlow: Flow<ThemeMode> =
+        context.unknownDataStore.data.map { prefs ->
+            ThemeMode.fromKey(prefs[Keys.THEME_MODE])
+        }
+
     val policyFlow: Flow<EnginePolicy> =
         context.unknownDataStore.data.map { prefs ->
             val raw = prefs[Keys.POLICY_JSON]
@@ -65,6 +80,14 @@ class SettingsStore(
 
     suspend fun setGuardEnabled(enabled: Boolean) {
         context.unknownDataStore.edit { it[Keys.GUARD_ENABLED] = enabled }
+    }
+
+    suspend fun setOnboardingCompleted(completed: Boolean) {
+        context.unknownDataStore.edit { it[Keys.ONBOARDING_COMPLETED] = completed }
+    }
+
+    suspend fun setThemeMode(mode: ThemeMode) {
+        context.unknownDataStore.edit { it[Keys.THEME_MODE] = mode.key }
     }
 
     suspend fun setPolicy(policy: EnginePolicy) {
