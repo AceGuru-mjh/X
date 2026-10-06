@@ -1,9 +1,9 @@
 package com.unknown.security.data.repository
 
 import android.content.Context
-import com.unknown.security.core.common.AppError
+import android.content.Intent
+import android.net.Uri
 import com.unknown.security.core.common.AppResult
-import com.unknown.security.core.common.ErrorKind
 import com.unknown.security.core.common.ShellOutcome
 import com.unknown.security.service.deviceadmin.DeviceAdminGate
 import com.unknown.security.service.root.RootShell
@@ -13,7 +13,7 @@ import com.unknown.security.service.shizuku.ShizukuGate
 enum class DisposalIntent { FORCE_STOP, UNINSTALL, FREEZE, HIDE }
 
 /** Channel that executed a disposal. */
-enum class ExecutionChannel { SHIZUKU, ROOT, DEVICE_POLICY, NONE }
+enum class ExecutionChannel { SHIZUKU, ROOT, DEVICE_POLICY, PLATFORM, NONE }
 
 data class DisposalResult(
     val intent: DisposalIntent,
@@ -84,6 +84,12 @@ class TierActionRouter(
             )
         }
 
+        // Standard tier fallback: REQUEST_DELETE_PACKAGES lets us hand the
+        // uninstall to the system, which asks the user for confirmation.
+        if (intent == DisposalIntent.UNINSTALL) {
+            return platformUninstall(intent, packageName)
+        }
+
         return DisposalResult(
             intent,
             packageName,
@@ -92,6 +98,30 @@ class TierActionRouter(
             "无可用特权通道（Shizuku 未就绪且 root 不可用）",
         )
     }
+
+    private fun platformUninstall(
+        intent: DisposalIntent,
+        packageName: String,
+    ): DisposalResult =
+        runCatching {
+            val uninstall =
+                Intent(Intent.ACTION_DELETE, Uri.fromParts("package", packageName, null))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            context.startActivity(uninstall)
+        }.fold(
+            onSuccess = {
+                DisposalResult(intent, packageName, ExecutionChannel.PLATFORM, true, "已调起系统卸载确认")
+            },
+            onFailure = {
+                DisposalResult(
+                    intent,
+                    packageName,
+                    ExecutionChannel.PLATFORM,
+                    false,
+                    "系统卸载入口不可用：${it.message}",
+                )
+            },
+        )
 
     private fun describe(outcome: AppResult<ShellOutcome>): String =
         when (outcome) {
