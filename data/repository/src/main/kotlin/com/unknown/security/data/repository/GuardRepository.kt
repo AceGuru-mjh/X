@@ -452,6 +452,7 @@ class GuardRepository(
             ExecutionChannel.SHIZUKU -> "Shizuku"
             ExecutionChannel.ROOT -> "Root"
             ExecutionChannel.DEVICE_POLICY -> "设备策略"
+            ExecutionChannel.PLATFORM -> "系统确认"
             ExecutionChannel.NONE -> "无通道"
         }
 }
